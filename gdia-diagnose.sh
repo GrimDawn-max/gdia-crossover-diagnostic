@@ -130,12 +130,13 @@ else
     warn "the bottle is set to $winver, and a working one is win10" \
          "change it in the bottle's Settings"
 
-  # which CrossOver owns this bottle: the two builds are different wine trees
-  pvw=$(grep -E '^"Preview"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
-  cxv=$(grep -E '^"Version"'  "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
-  info "made by    ${cxv:-unknown}${pvw:+  (CrossOver Preview)}"
+  # Which CrossOver owns this bottle. The "Preview" key does not say -- it is
+  # absent from most bottles and set on some made by the ordinary build. The
+  # Version field is the one that matches an installed application's version.
+  cxv=$(grep -E '^"Version"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
+  info "made by    CrossOver ${cxv:-unknown}"
   (( ${#cx_apps} > 1 )) && warn "more than one CrossOver is installed, and a bottle behaves differently under each" \
-      "launch Item Assistant from the one named above${pvw:+ -- CrossOver Preview}"
+      "the version above says which one made it -- run Item Assistant from that one"
 
   # ------------------------------------------------------------- WebView2
   head2 "WebView2 runtime  (the usual cause of a black window)"
@@ -250,20 +251,108 @@ else
     fi
   done
 
-  # --------------------------------------------------------------- logs
-  head2 "Logs"
-  logs=()
-  for l in "$iagd_bottle/drive_c/users"/*/"AppData/Local/IAGD"/**/*.log \
-           "$iagd_bottle/drive_c/users"/*/"Documents/IAGD"/**/*.log; do
-    logs+=("$l")
+  # ------------------------------------------- does it know any items at all
+  # The grid can be empty for a reason that has nothing to do with rendering:
+  # Item Assistant has to parse Grim Dawn's own item database before it can
+  # show anything, and it cannot find the game by itself here. Its automatic
+  # search looks at the Windows registry and the usual install folders inside
+  # its own bottle, so a bottle that holds Item Assistant and not the game
+  # finds nothing -- the location has to be set by hand, to a path that bottle
+  # can actually reach.
+  head2 "Does it know any items"
+
+  gd_here=""
+  for g in "$iagd_bottle/drive_c"/*/"Grim Dawn" "$iagd_bottle/drive_c"/*/*/"Grim Dawn"; do
+    [[ -f "$g/Grim Dawn.exe" || -f "$g/x64/Grim Dawn.exe" ]] && { gd_here=$g; break }
   done
-  if (( ${#logs} == 0 )); then
-    info "no Item Assistant log files found"
+  if [[ -n $gd_here ]]; then
+    info "Grim Dawn is in this bottle too, at $(tidy ${gd_here#$iagd_bottle/drive_c})"
   else
-    for l in ${logs[1,3]}; do
-      info "$(tidy $l)  ($(wc -l < "$l" | tr -d ' ') lines, modified $(date -r "$l" '+%Y-%m-%d %H:%M'))"
-      grep -iE "error|exception|fail" "$l" 2>/dev/null | tail -3 | sed 's/^/              /'
+    info "Grim Dawn is NOT in this bottle -- Item Assistant cannot find it by itself"
+  fi
+
+  iagd_data=""
+  for d in "$iagd_bottle/drive_c/users"/*/"AppData/Local/EvilSoft/IAGD"; do
+    [[ -d $d ]] && { iagd_data=$d; break }
+  done
+
+  if [[ -z $iagd_data ]]; then
+    warn "Item Assistant has never been run in this bottle" \
+         "it writes its settings and log the first time it starts"
+  else
+    # settings.json has CRLF endings, so a pattern anchored with $ never
+    # matches -- everything here ends with .* instead
+    loc=$(sed -n 's/.*"currentGrimdawnLocation"[^"]*"\(.*\)".*/\1/p' "$iagd_data/settings.json" 2>/dev/null | head -1)
+    parsed=$(sed -n 's/.*"isGrimDawnParsed"[^:]*:[ ]*\([a-z]*\).*/\1/p' "$iagd_data/settings.json" 2>/dev/null | head -1)
+
+    known=""; mine=""
+    db="$iagd_data/data/userdata.db"
+    if [[ -f $db ]] && (( $+commands[sqlite3] )); then
+      known=$(sqlite3 "$db" "select count(*) from DatabaseItem_v2;" 2>/dev/null)
+      mine=$(sqlite3  "$db" "select count(*) from PlayerItem;"      2>/dev/null)
+    fi
+
+    # the count is the answer; the location only explains a count of zero
+    if [[ -n $known ]] && (( known > 0 )); then
+      ok "knows $known of Grim Dawn's items, and holds ${mine:-0} of yours"
+      (( ${mine:-0} == 0 )) && warn "it holds none of your own items" \
+          "put something in the transfer stash in game and let it read that"
+    elif [[ -n $known ]]; then
+      bad "Item Assistant knows none of Grim Dawn's items" \
+          "nothing can appear in the grid until it reads the game's item database"
+    elif [[ ! -f $db ]]; then
+      bad "there is no item database file yet" \
+          "Item Assistant makes it the first time it reads the game"
+    else
+      info "item counts need sqlite3, which is not on this machine"
+    fi
+
+    # shown either way: it is what a count of zero is usually caused by
+    if [[ -z $loc ]]; then
+      bad "no Grim Dawn folder is set in Item Assistant" \
+          "set it in Item Assistant's settings; if the game is in another bottle, reach it through the Z: drive"
+    else
+      info "Grim Dawn folder set to  ${loc//\\\\/\\}"
+      [[ $parsed == true ]] || warn "it has not finished reading that folder" \
+          "the path may be wrong, or unreachable from this bottle"
+    fi
+  fi
+
+  # --------------------------------------------------------------- its own log
+  # Item Assistant writes a diagnostics report of its own at every start, which
+  # is better evidence than anything this script can infer. It lives under
+  # EvilSoft, not under IAGD -- looking in the wrong place reported "no logs"
+  # on an installation that had plenty.
+  head2 "Item Assistant's own report"
+  if [[ -z $iagd_data || ! -f "$iagd_data/log.txt" ]]; then
+    info "no log yet -- start Item Assistant once, then run this again"
+  else
+    info "from $(tidy $iagd_data/log.txt), $(date -r "$iagd_data/log.txt" '+%Y-%m-%d %H:%M')"
+    say ""
+    # verbatim, less the machine name, which is the one identifying line in it
+    sed -n '/\[diag\] Item Assistant diagnostics/,/\[diag\].*Queued transfers/p' "$iagd_data/log.txt" \
+      | sed -e 's/.*\[diag\] //' -e '/Machine name/d' -e "s|^|     |"
+    say ""
+
+    head2 "How far it got last time"
+    for pair in \
+      "The Grim Dawn database has been parsed|read the game's item database" \
+      "WebView2 initialization successful|started the renderer" \
+      "WebView2 navigation succeeded|drew the item grid"; do
+      pat=${pair%%|*}; what=${pair##*|}
+      if grep -qF "$pat" "$iagd_data/log.txt"; then
+        ok "$what"
+      else
+        bad "never $what" "this is the step it stops at"
+      fi
     done
+
+    errs=$(grep -ciE "ERROR|FATAL" "$iagd_data/log.txt")
+    if (( errs )); then
+      head2 "Errors in that log  ($errs in all)"
+      grep -iE "ERROR|FATAL" "$iagd_data/log.txt" | tail -5 \
+        | sed -e "s|$HOME|~|g" -e 's/^/     /'
+    fi
   fi
 fi
 
