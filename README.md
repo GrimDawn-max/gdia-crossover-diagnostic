@@ -67,10 +67,18 @@ Then the cause is something this script does not yet know to look for. Say so,
 and include the report anyway — knowing what has been ruled out is most of the
 work.
 
-## Related
+## The setup guide
 
-The full installation procedure this checks against is the Item Assistant on
-macOS / CrossOver setup guide on the Crate Entertainment forum.
+This script checks an installation against one particular procedure:
+
+**[Grim Dawn Item Assistant on macOS (CrossOver)][guide]** — on the Crate
+Entertainment forum.
+
+Follow that first. This is for working out what went wrong afterwards.
+
+[guide]: https://forums.crateentertainment.com/t/grim-dawn-item-assistant-on-macos-crossover/160408/3
+
+## Related
 
 Item Assistant itself is by EvilSoft and is not connected to this repository.
 This is a diagnostic for people installing it under CrossOver, nothing more.
