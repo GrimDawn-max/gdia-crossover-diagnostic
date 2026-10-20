@@ -42,11 +42,13 @@ works the same way.
 | Bottles | every bottle found, and which one holds Item Assistant |
 | WebView2 | the installed runtime version, against the one that works |
 | Install rules | whether the registry rules that select that runtime are set |
-| Renderer | the browser arguments and version overrides in effect |
+| Environment | all four settings a bottle needs to render, against a bottle that does |
 | .NET | that the Desktop Runtime 10.x is present, not just the plain runtime |
 | Item Assistant | where it is installed, and anything in its logs |
 
-It finishes with a summary naming what is wrong and what to do about each one.
+It finishes with a summary naming what is wrong and what to do about each one,
+and if the environment is what is out of place, the exact lines to add and the
+file to add them to.
 
 ## What it does not do
 

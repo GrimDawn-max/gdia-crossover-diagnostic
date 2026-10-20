@@ -17,8 +17,20 @@ emulate -L zsh
 setopt null_glob
 
 GOOD_WEBVIEW="109.0.1518.140"
+
+# The environment of a bottle that is known to render the item grid. All four
+# matter: the browser arguments force software rendering, and the other three
+# were each needed to get this far on Apple silicon.
+typeset -A GOOD_ENV=(
+  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS "--no-sandbox --disable-gpu --disable-gpu-compositing --disable-gpu-sandbox --disable-accelerated-2d-canvas --disable-accelerated-video-decode --use-gl=swiftshader --in-process-gpu"
+  DOTNET_SYSTEM_GLOBALIZATION_USENLS    "1"
+  WINEMSYNC                             "0"
+  CX_GRAPHICS_BACKEND                   ""
+)
+
 problems=()
 notes=()
+env_wrong=()
 
 say()  { print -r -- "$@" }
 head2(){ print -r -- ""; print -r -- "── $1"; }
@@ -107,8 +119,23 @@ else
   info "$(basename "$iagd_bottle")   at $(tidy $iagd_bottle)"
   tmpl=$(grep -E '^"Template"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
   info "template   ${tmpl:-unknown}"
-  winver=$(reg_value "$iagd_bottle/system.reg" 'Software\\Microsoft\\Windows NT\\CurrentVersion' CurrentVersion)
-  [[ -n $winver ]] && info "windows    $winver"
+  # ProductName and CurrentBuild, not CurrentVersion: wine leaves CurrentVersion
+  # at 6.3 even on a win10 template, so reporting it sends people chasing a
+  # Windows 8.1 that is not there.
+  prod=$(reg_value "$iagd_bottle/system.reg" 'Software\\Microsoft\\Windows NT\\CurrentVersion' ProductName)
+  bld=$(reg_value  "$iagd_bottle/system.reg" 'Software\\Microsoft\\Windows NT\\CurrentVersion' CurrentBuild)
+  info "windows    ${prod:-unknown}${bld:+ build $bld}"
+  winver=$(grep -E '^"WindowsVersion"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
+  [[ -n $winver && $winver != win10 ]] && \
+    warn "the bottle is set to $winver, and a working one is win10" \
+         "change it in the bottle's Settings"
+
+  # which CrossOver owns this bottle: the two builds are different wine trees
+  pvw=$(grep -E '^"Preview"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
+  cxv=$(grep -E '^"Version"'  "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1 | cut -d'"' -f4)
+  info "made by    ${cxv:-unknown}${pvw:+  (CrossOver Preview)}"
+  (( ${#cx_apps} > 1 )) && warn "more than one CrossOver is installed, and a bottle behaves differently under each" \
+      "launch Item Assistant from the one named above${pvw:+ -- CrossOver Preview}"
 
   # ------------------------------------------------------------- WebView2
   head2 "WebView2 runtime  (the usual cause of a black window)"
@@ -153,21 +180,33 @@ else
   done
 
   # ------------------------------------------- renderer flags and overrides
-  head2 "Renderer settings  (why a window can be black with the right runtime)"
-  args=$(grep -E '^"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"' "$iagd_bottle/cxbottle.conf" 2>/dev/null | cut -d'"' -f4)
-  if [[ -z $args ]]; then
-    warn "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is not set" \
-         "a working reference install sets it to force software rendering; see the summary"
-  else
-    info "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS ="
-    info "   $args"
-    for flag in --disable-gpu --use-gl=swiftshader --in-process-gpu; do
-      [[ $args == *$flag* ]] || warn "$flag is not among those arguments" \
-          "software rendering may not be forced"
-    done
-  fi
+  head2 "Environment  (why a window can be black with the right runtime)"
+  for name in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS DOTNET_SYSTEM_GLOBALIZATION_USENLS \
+              WINEMSYNC CX_GRAPHICS_BACKEND; do
+    want=${GOOD_ENV[$name]}
+    line=$(grep -E "^\"$name\"" "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1)
+    if [[ -z $line ]]; then
+      warn "$name is not set" "a bottle that renders sets it to \"$want\""
+      env_wrong+=("$name")
+      continue
+    fi
+    have=$(print -r -- "$line" | cut -d'"' -f4)
+    if [[ $have == $want ]]; then
+      ok "$name"
+    else
+      warn "$name is \"$have\"" "a bottle that renders sets it to \"$want\""
+      env_wrong+=("$name")
+    fi
+  done
+
   v=$(reg_value "$iagd_bottle/user.reg" 'Software\\Wine\\AppDefaults\\msedgewebview2.exe' Version)
-  info "msedgewebview2.exe version override: ${v:-none}"
+  case $v in
+    win7) ok "msedgewebview2.exe -> win7" ;;
+    "")   warn "msedgewebview2.exe has no Version rule" \
+               "a bottle that renders sets it to win7 -- the renderer takes a different drawing path depending on what Windows it thinks it is on" ;;
+    *)    warn "msedgewebview2.exe -> $v, and a bottle that renders uses win7" \
+               "the renderer takes a different drawing path depending on what Windows it thinks it is on" ;;
+  esac
 
   # ---------------------------------------------------------------- .NET
   head2 ".NET 10 Desktop Runtime"
@@ -197,7 +236,18 @@ else
       esac
     done
     [[ -n $main ]] && info "main program $(basename "$main")"
-    info "files        $(ls -1 "$d" | wc -l | tr -d ' ') items"
+    # a raw file count is not comparable between versions; what matters is
+    # whether the pieces that draw the item grid are present
+    missing=()
+    for f in WebView2Loader.dll Microsoft.Web.WebView2.Core.dll \
+             Microsoft.Web.WebView2.WinForms.dll IAGrim.dll; do
+      [[ -f "$d/$f" ]] || missing+=("$f")
+    done
+    if (( ${#missing} )); then
+      bad "Item Assistant is missing ${missing[*]}" "reinstall it -- step 5"
+    else
+      ok "the WebView2 pieces it draws the grid with are all present"
+    fi
   done
 
   # --------------------------------------------------------------- logs
@@ -226,4 +276,26 @@ else
   (( ${#problems} )) && { say "   Problems:"; for p in $problems; do say "    - $p"; done }
   (( ${#notes} ))    && { say "   Worth checking:"; for n in $notes; do say "    - $n"; done }
 fi
+
+# If the environment is the only thing out of place, say exactly what to change.
+# This is the common case once the runtime is right, and it is no use naming a
+# setting without saying where it lives.
+if (( ${#env_wrong} )); then
+  head2 "Setting those"
+  say "   Quit CrossOver first -- it rewrites this file when it exits."
+  say ""
+  say "   Open this file in TextEdit:"
+  say ""
+  say "      $(tidy $iagd_bottle)/cxbottle.conf"
+  say ""
+  say "   Find the line that reads [EnvironmentVariables], near the bottom, and"
+  say "   put these underneath it, replacing any of the same name already there:"
+  say ""
+  for name in $env_wrong; do
+    say "      \"$name\" = \"${GOOD_ENV[$name]}\""
+  done
+  say ""
+  say "   Save, then start CrossOver and run Item Assistant again."
+fi
+
 say ""
