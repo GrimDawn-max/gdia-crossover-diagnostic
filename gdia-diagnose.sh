@@ -56,6 +56,23 @@ reg_value() {
     }' "$file"
 }
 
+# A windows path as Item Assistant stores it, turned back into a real one.
+# The drive letters are symlinks in the bottle's dosdevices folder, so this is
+# the only way to tell whether a configured folder exists -- and whether it
+# points outside the bottle, which is how a separate-bottle setup has to work.
+win_to_real() {
+  local bottle=$1 win=$2 letter target rest full
+  [[ $win == ?:* ]] || return 1
+  letter=${(L)win[1]}
+  target=$(readlink "$bottle/dosdevices/$letter:" 2>/dev/null) || return 1
+  [[ $target == /* ]] || target="$bottle/dosdevices/$target"
+  rest=${win[3,-1]//\\//}
+  # :A normalises -- the c: mapping is relative (../drive_c), and an
+  # unnormalised path fails every later comparison against the bottle
+  local full="${target%/}$rest"
+  print -r -- "${full:A}"
+}
+
 say "Item Assistant / CrossOver diagnostic"
 say "generated $(date '+%Y-%m-%d %H:%M %Z')"
 
@@ -307,14 +324,73 @@ else
       info "item counts need sqlite3, which is not on this machine"
     fi
 
-    # shown either way: it is what a count of zero is usually caused by
-    if [[ -z $loc ]]; then
-      bad "no Grim Dawn folder is set in Item Assistant" \
-          "set it in Item Assistant's settings; if the game is in another bottle, reach it through the Z: drive"
+  fi
+
+  # ---------------------------------------- which Grim Dawn it is reading
+  # The last tab in Item Assistant sets this, and it is the setting a
+  # separate-bottle installation gets wrong: the folder is stored as a windows
+  # path, and a windows path that no drive letter reaches is accepted silently.
+  head2 "Which Grim Dawn it reads"
+  if [[ -z $iagd_data ]]; then
+    info "nothing set yet -- Item Assistant has not been run"
+  elif [[ -z $loc ]]; then
+    bad "no Grim Dawn folder is set" \
+        "set it on the last tab in Item Assistant; if the game is in another bottle, reach it through the Z: drive"
+  else
+    # stored with doubled backslashes, being json
+    win=${loc//\\\\/\\}
+    info "folder       $win"
+    real=$(win_to_real "$iagd_bottle" "$win")
+    if [[ -z $real ]]; then
+      bad "no drive $win[1,2] exists in this bottle, so that folder cannot be read" \
+          "map the drive, or set a folder this bottle can reach"
+    elif [[ ! -d $real ]]; then
+      bad "that folder does not exist" \
+          "it resolves to $(tidy $real), and there is nothing there"
     else
-      info "Grim Dawn folder set to  ${loc//\\\\/\\}"
-      [[ $parsed == true ]] || warn "it has not finished reading that folder" \
-          "the path may be wrong, or unreachable from this bottle"
+      info "which is     $(tidy $real)"
+      if [[ $real == $iagd_bottle/drive_c/* ]]; then
+        info "             (inside this bottle)"
+      else
+        other=$real
+        while [[ $other != / && ! -f $other/cxbottle.conf ]]; do other=${other:h}; done
+        if [[ -f $other/cxbottle.conf ]]; then
+          info "             (in the bottle $(basename $other), reached through $win[1,2])"
+          notes+=("the game is read from another bottle -- file reading works, but the in-game hook cannot reach a process in a different bottle")
+        else
+          info "             (outside any bottle)"
+        fi
+      fi
+
+      # the databases actually sitting there, which is what gets read
+      arz=()
+      for f in "$real"/database/*.arz "$real"/gdx*/database/*.arz; do arz+=("${f:t}") done
+      if (( ${#arz} == 0 )); then
+        bad "there are no Grim Dawn databases in that folder" \
+            "it is not a Grim Dawn install folder -- point it at the one holding Grim Dawn.exe"
+      else
+        ok "databases there: ${arz[*]}"
+      fi
+    fi
+
+    mod=$(sed -n 's/.*"currentGrimdawnMod"[^"]*"\(.*\)".*/\1/p' "$iagd_data/settings.json" 2>/dev/null | head -1)
+    info "mod          ${mod:-none (the base game)}"
+    [[ $parsed == true ]] && ok "it has finished reading that folder" \
+      || warn "it has not finished reading that folder" "the path may be wrong, or unreadable"
+
+    # which expansions are represented in what it read. An install missing one
+    # shows no items from it, which looks like items going missing.
+    if [[ -n $known ]] && (( known > 0 )); then
+      for pair in "gdx1|Ashes of Malmouth" "gdx2|Forgotten Gods" "gdx3|Fangs of Asterkarn"; do
+        x=${pair%%|*}; label=${pair##*|}
+        n=$(sqlite3 "$db" "select count(*) from DatabaseItem_v2 where baserecord like '%$x%';" 2>/dev/null)
+        if (( ${n:-0} > 0 )); then
+          ok "read $label  ($n records)"
+        else
+          warn "read nothing from $label" \
+               "either it is not installed, or that part of the database was not read -- its items cannot appear"
+        fi
+      done
     fi
   fi
 

@@ -52,7 +52,7 @@ works the same way.
 | Environment | all four settings a bottle needs to render, against a bottle that does |
 | .NET | that the Desktop Runtime 10.x is present, not just the plain runtime |
 | Items | how many of the game's items it knows, and how many of yours it holds |
-| Game folder | whether Grim Dawn is in the same bottle, and which folder is set |
+| Game folder | the folder set on Item Assistant's last tab, where it really points, whether it is there, and which expansions were read from it |
 | Its own report | Item Assistant's built-in diagnostics, and how far it got last run |
 
 It finishes with a summary naming what is wrong and what to do about each one,
