@@ -342,14 +342,14 @@ else
       fi
     else
       if (( known > 0 )); then
-        ok "it recognises $known of Grim Dawn's own items"
+        ok "it recognises $known item types from Grim Dawn's database"
       else
-        bad "it recognises none of Grim Dawn's items" \
+        bad "it recognises no item types from Grim Dawn's database" \
             "it has not read the game's item database, and nothing can appear until it does"
       fi
 
       if (( ${mine:-0} > 0 )); then
-        ok "it is holding ${mine} of your items"
+        ok "$mine of your own items are stored in it"
         newest=$(sqlite3 "$db" "select date(max(created_at)/1000,'unixepoch') from PlayerItem;" 2>/dev/null)
         [[ -n $newest ]] && info "the most recent was stored on $newest"
         # a breakdown, because items under a mod or on hardcore are only shown
@@ -360,8 +360,8 @@ else
                        from PlayerItem group by Mod, IsHardcore order by count(*) desc;" 2>/dev/null \
           | while read -r l; do info "   $l"; done
       else
-        bad "Item Assistant is holding no items at all" \
-            "there is nothing for it to show -- put something in the transfer stash in game and let it read that"
+        bad "none of your own items are stored in it" \
+            "there is nothing for it to show, whatever the renderer does -- put something in the transfer stash in game and let it read that"
       fi
     fi
   fi
