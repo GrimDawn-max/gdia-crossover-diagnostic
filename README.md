@@ -51,7 +51,7 @@ works the same way.
 | Install rules | whether the registry rules that select that runtime are set |
 | Environment | all four settings a bottle needs to render, against a bottle that does |
 | .NET | that the Desktop Runtime 10.x is present, not just the plain runtime |
-| Items | how many of the game's items it knows, and how many of yours it holds |
+| Items | how many of the game's items it recognises, and how many of yours it is holding — a count of zero on either is a fault, and a different one each time |
 | Game folder | the folder set on Item Assistant's last tab, where it really points, whether it is there, and which expansions were read from it |
 | Its own report | Item Assistant's built-in diagnostics, and how far it got last run |
 

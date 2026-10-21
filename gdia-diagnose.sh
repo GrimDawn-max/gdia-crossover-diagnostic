@@ -329,21 +329,41 @@ else
       mine=$(sqlite3  "$db" "select count(*) from PlayerItem;"      2>/dev/null)
     fi
 
-    # the count is the answer; the location only explains a count of zero
-    if [[ -n $known ]] && (( known > 0 )); then
-      ok "knows $known of Grim Dawn's items, and holds ${mine:-0} of yours"
-      (( ${mine:-0} == 0 )) && warn "it holds none of your own items" \
-          "put something in the transfer stash in game and let it read that"
-    elif [[ -n $known ]]; then
-      bad "Item Assistant knows none of Grim Dawn's items" \
-          "nothing can appear in the grid until it reads the game's item database"
-    elif [[ ! -f $db ]]; then
-      bad "there is no item database file yet" \
-          "Item Assistant makes it the first time it reads the game"
+    # Two separate counts, and either being zero is a different fault. The
+    # first is the game's own items, which it must read before it can show
+    # anything. The second is the reader's items, which is what there is to
+    # show -- an empty grid with a healthy renderer is usually just this.
+    if [[ -z $known ]]; then
+      if [[ ! -f $db ]]; then
+        bad "there is no item database file yet" \
+            "Item Assistant makes it the first time it reads the game"
+      else
+        info "item counts need sqlite3, which is not on this machine"
+      fi
     else
-      info "item counts need sqlite3, which is not on this machine"
-    fi
+      if (( known > 0 )); then
+        ok "it recognises $known of Grim Dawn's own items"
+      else
+        bad "it recognises none of Grim Dawn's items" \
+            "it has not read the game's item database, and nothing can appear until it does"
+      fi
 
+      if (( ${mine:-0} > 0 )); then
+        ok "it is holding ${mine} of your items"
+        newest=$(sqlite3 "$db" "select date(max(created_at)/1000,'unixepoch') from PlayerItem;" 2>/dev/null)
+        [[ -n $newest ]] && info "the most recent was stored on $newest"
+        # a breakdown, because items under a mod or on hardcore are only shown
+        # when the matching mod and mode are selected
+        sqlite3 "$db" "select coalesce(nullif(Mod,''),'(base game)') || ', ' ||
+                              case IsHardcore when 1 then 'hardcore' else 'softcore' end ||
+                              '   ' || count(*)
+                       from PlayerItem group by Mod, IsHardcore order by count(*) desc;" 2>/dev/null \
+          | while read -r l; do info "   $l"; done
+      else
+        bad "Item Assistant is holding no items at all" \
+            "there is nothing for it to show -- put something in the transfer stash in game and let it read that"
+      fi
+    fi
   fi
 
   # ---------------------------------------- which Grim Dawn it is reading
