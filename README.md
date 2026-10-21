@@ -46,7 +46,7 @@ works the same way.
 |---|---|
 | Machine | macOS version, processor, architecture |
 | CrossOver | which copies are installed, and their versions |
-| Bottles | every bottle found, and which one holds Item Assistant |
+| Bottles | every bottle found, and every one holding Item Assistant |
 | WebView2 | the installed runtime version, against the one that works |
 | Install rules | whether the registry rules that select that runtime are set |
 | Environment | all four settings a bottle needs to render, against a bottle that does |
@@ -55,9 +55,10 @@ works the same way.
 | Game folder | the folder set on Item Assistant's last tab, where it really points, whether it is there, and which expansions were read from it |
 | Its own report | Item Assistant's built-in diagnostics, and how far it got last run |
 
-It finishes with a summary naming what is wrong and what to do about each one,
-and if the environment is what is out of place, the exact lines to add and the
-file to add them to.
+It finishes with a summary naming what is wrong and what to do about each one.
+If the bottle's settings are what is out of place, it then gives them as
+numbered steps — the exact lines to add, the file to add them to, and the order
+to do it in, since CrossOver rewrites that file when it exits.
 
 ## What it does not do
 

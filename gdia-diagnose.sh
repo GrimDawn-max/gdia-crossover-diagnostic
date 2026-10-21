@@ -31,6 +31,7 @@ typeset -A GOOD_ENV=(
 problems=()
 notes=()
 env_wrong=()
+rule_missing=0
 
 say()  { print -r -- "$@" }
 head2(){ print -r -- ""; print -r -- "── $1"; }
@@ -119,14 +120,31 @@ for bd in $bottle_dirs; do
 done
 (( ${#bottles} == 0 )) && bad "No bottles found" "nothing is installed yet"
 
-# find the bottle holding Item Assistant
-iagd_bottle=""
+# Every bottle holding Item Assistant, not the first one found. Installing it
+# twice is easy to do and the two copies keep separate settings and separate
+# item databases, so a report describing the wrong copy explains nothing.
+iagd_bottles=()
 for b in $bottles; do
-  if [[ -d "$b/drive_c/Program Files/IAGD" || -d "$b/drive_c/Program Files (x86)/IAGD" ]]; then
-    iagd_bottle=$b
-    break
-  fi
+  [[ -d "$b/drive_c/Program Files/IAGD" || -d "$b/drive_c/Program Files (x86)/IAGD" ]] \
+    && iagd_bottles+=("$b")
 done
+
+# Examine the one actually being run: the most recently written log wins. A
+# copy that has never been started has no log, and loses to one that has.
+iagd_bottle=""
+newest=0
+for b in $iagd_bottles; do
+  when=0
+  for l in "$b/drive_c/users"/*/"AppData/Local/EvilSoft/IAGD/log.txt"; do
+    [[ -f $l ]] && when=$(stat -f %m "$l" 2>/dev/null)
+  done
+  (( when >= newest )) && { newest=$when; iagd_bottle=$b }
+done
+
+if (( ${#iagd_bottles} > 1 )); then
+  warn "Item Assistant is installed in ${#iagd_bottles} bottles: ${${iagd_bottles[@]:t}}" \
+       "each keeps its own settings and its own item database -- the one examined below is $(basename $iagd_bottle), the one used most recently"
+fi
 
 if [[ -z $iagd_bottle ]]; then
   bad "Item Assistant is not installed in any bottle" \
@@ -221,9 +239,11 @@ else
   case $v in
     win7) ok "msedgewebview2.exe -> win7" ;;
     "")   warn "msedgewebview2.exe has no Version rule" \
-               "a bottle that renders sets it to win7 -- the renderer takes a different drawing path depending on what Windows it thinks it is on" ;;
+               "a bottle that renders sets it to win7 -- the renderer takes a different drawing path depending on what Windows it thinks it is on"
+          rule_missing=1 ;;
     *)    warn "msedgewebview2.exe -> $v, and a bottle that renders uses win7" \
-               "the renderer takes a different drawing path depending on what Windows it thinks it is on" ;;
+               "the renderer takes a different drawing path depending on what Windows it thinks it is on"
+          rule_missing=1 ;;
   esac
 
   # ---------------------------------------------------------------- .NET
@@ -445,22 +465,48 @@ fi
 # If the environment is the only thing out of place, say exactly what to change.
 # This is the common case once the runtime is right, and it is no use naming a
 # setting without saying where it lives.
-if (( ${#env_wrong} )); then
+# If the settings are what is out of place, say exactly what to change. This is
+# the common case once the runtime is right, and it is no use naming a setting
+# without saying where it lives. Ordered as it has to be done: the file is
+# rewritten when CrossOver exits, so it is edited first, with CrossOver closed.
+if (( ${#env_wrong} || rule_missing )); then
   head2 "Setting those"
-  say "   Quit CrossOver first -- it rewrites this file when it exits."
-  say ""
-  say "   Open this file in TextEdit:"
-  say ""
-  say "      $(tidy $iagd_bottle)/cxbottle.conf"
-  say ""
-  say "   Find the line that reads [EnvironmentVariables], near the bottom, and"
-  say "   put these underneath it, replacing any of the same name already there:"
-  say ""
-  for name in $env_wrong; do
-    say "      \"$name\" = \"${GOOD_ENV[$name]}\""
-  done
-  say ""
-  say "   Save, then start CrossOver and run Item Assistant again."
+  step=0
+
+  if (( ${#env_wrong} )); then
+    say "   $((++step)). Quit CrossOver -- it rewrites this file when it exits."
+    say ""
+    say "   $((++step)). Open this file in TextEdit:"
+    say ""
+    say "         $(tidy $iagd_bottle)/cxbottle.conf"
+    say ""
+    say "      Find the line that reads [EnvironmentVariables], near the bottom,"
+    say "      and put these underneath it, replacing any of the same name that"
+    say "      are already there:"
+    say ""
+    for name in $env_wrong; do
+      say "         \"$name\" = \"${GOOD_ENV[$name]}\""
+    done
+    say ""
+    say "      Save and close it."
+    say ""
+  fi
+
+  if (( rule_missing )); then
+    # They have already done this twice, for the installer and the updater, in
+    # step 2 of the guide. Naming it that way is clearer than any instruction.
+    say "   $((++step)). Start CrossOver, and set the same kind of rule step 2 of the"
+    say "      setup guide sets -- a Version of win7 -- but on the renderer itself."
+    say "      In this bottle: Control Panel > Wine Configuration > Applications,"
+    say "      add"
+    say ""
+    say "         c:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\$GOOD_WEBVIEW\\msedgewebview2.exe"
+    say ""
+    say "      and set its Windows version to Windows 7."
+    say ""
+  fi
+
+  say "   $((++step)). Run Item Assistant, then run this script again."
 fi
 
 say ""
