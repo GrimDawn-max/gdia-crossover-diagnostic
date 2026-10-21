@@ -8,9 +8,13 @@ It is for one symptom in particular: **Item Assistant runs, but you cannot see
 your items.** There are two quite different causes, and the report separates
 them:
 
-- **The renderer draws nothing.** Usually a WebView2 runtime later than
-  `109.0.1518.140`. Later builds fail by rendering nothing rather than by
-  reporting an error, so the application looks like it is working.
+- **The renderer draws nothing.** Either a WebView2 runtime later than
+  `109.0.1518.140`, or — more often, because the setup guide does not mention
+  it — the runtime having no `win7` rule of its own. WebView2 109 composites
+  differently depending on which Windows it believes it is on, and on `win10`
+  what it draws never reaches the window. Neither failure reports an error: the
+  log records the renderer starting and navigating successfully, and the panel
+  is black.
 - **There is nothing to draw.** Item Assistant has to read Grim Dawn's own item
   database before it can show anything, and it cannot find the game by itself
   under CrossOver — its search looks inside its own bottle. If Item Assistant
@@ -49,7 +53,8 @@ works the same way.
 | Bottles | every bottle found, and every one holding Item Assistant |
 | WebView2 | the installed runtime version, against the one that works |
 | Install rules | whether the registry rules that select that runtime are set |
-| Environment | all four settings a bottle needs to render, against a bottle that does |
+| Renderer version | the `win7` rule on `msedgewebview2.exe` — the setting that decides whether the item grid appears at all |
+| Other settings | the bottle's graphics backend, msync and browser arguments, reported for context: each was tested on its own and none of them makes the grid black |
 | .NET | that the Desktop Runtime 10.x is present, not just the plain runtime |
 | Items | how many of the game's items it recognises, and how many of yours it is holding — a count of zero on either is a fault, and a different one each time |
 | Game folder | the folder set on Item Assistant's last tab, where it really points, whether it is there, and which expansions were read from it |

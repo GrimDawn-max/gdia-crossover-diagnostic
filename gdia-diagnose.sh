@@ -18,19 +18,9 @@ setopt null_glob
 
 GOOD_WEBVIEW="109.0.1518.140"
 
-# The environment of a bottle that is known to render the item grid. All four
-# matter: the browser arguments force software rendering, and the other three
-# were each needed to get this far on Apple silicon.
-typeset -A GOOD_ENV=(
-  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS "--no-sandbox --disable-gpu --disable-gpu-compositing --disable-gpu-sandbox --disable-accelerated-2d-canvas --disable-accelerated-video-decode --use-gl=swiftshader --in-process-gpu"
-  DOTNET_SYSTEM_GLOBALIZATION_USENLS    "1"
-  WINEMSYNC                             "0"
-  CX_GRAPHICS_BACKEND                   ""
-)
 
 problems=()
 notes=()
-env_wrong=()
 rule_missing=0
 
 say()  { print -r -- "$@" }
@@ -215,36 +205,54 @@ else
     fi
   done
 
-  # ------------------------------------------- renderer flags and overrides
-  head2 "Environment  (why a window can be black with the right runtime)"
-  for name in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS DOTNET_SYSTEM_GLOBALIZATION_USENLS \
-              WINEMSYNC CX_GRAPHICS_BACKEND; do
-    want=${GOOD_ENV[$name]}
-    line=$(grep -E "^\"$name\"" "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1)
-    if [[ -z $line ]]; then
-      warn "$name is not set" "a bottle that renders sets it to \"$want\""
-      env_wrong+=("$name")
-      continue
-    fi
-    have=$(print -r -- "$line" | cut -d'"' -f4)
-    if [[ $have == $want ]]; then
-      ok "$name"
-    else
-      warn "$name is \"$have\"" "a bottle that renders sets it to \"$want\""
-      env_wrong+=("$name")
-    fi
-  done
-
+  # ------------------------------- the renderer's own idea of which Windows
+  # This is the one that decides whether the item grid appears, established by
+  # removing it from a bottle that worked and watching the grid go black, then
+  # restoring it and watching it come back -- with the graphics backend, msync
+  # and the browser arguments each held constant and each shown to make no
+  # difference. WebView2 109 composites differently depending on what Windows
+  # it believes it is running on, and on win10 what it draws never reaches the
+  # window. Nothing reports an error: the log records the renderer starting and
+  # navigating successfully, and the panel is black.
+  head2 "The renderer's Windows version  (what makes the item grid black)"
   v=$(reg_value "$iagd_bottle/user.reg" 'Software\\Wine\\AppDefaults\\msedgewebview2.exe' Version)
   case $v in
     win7) ok "msedgewebview2.exe -> win7" ;;
-    "")   warn "msedgewebview2.exe has no Version rule" \
-               "a bottle that renders sets it to win7 -- the renderer takes a different drawing path depending on what Windows it thinks it is on"
+    "")   bad "msedgewebview2.exe has no Windows version rule" \
+              "it needs win7, and without it the item grid is black however healthy everything else is"
           rule_missing=1 ;;
-    *)    warn "msedgewebview2.exe -> $v, and a bottle that renders uses win7" \
-               "the renderer takes a different drawing path depending on what Windows it thinks it is on"
+    *)    bad "msedgewebview2.exe is set to $v, and it needs win7" \
+              "on anything but win7 the item grid is black however healthy everything else is"
           rule_missing=1 ;;
   esac
+  if (( rule_missing )); then
+    info ""
+    info "This is separate from the two rules in step 2 above. Those decide which"
+    info "runtime Microsoft offers when you install it; this decides whether the"
+    info "runtime can draw once it is installed. All three are needed."
+  fi
+
+  # ------------------------------------------------- the rest of the settings
+  # Reported, not recommended. Each of these was tested on a bottle whose item
+  # grid worked -- removed, or set to the reporter's value, one at a time --
+  # and none of them made the grid black. The browser arguments force software
+  # rendering, which hides the fault above rather than fixing it, so they are
+  # worth trying only when the rule is already win7 and the grid is still
+  # black.
+  head2 "Other settings  (none of these cause a black item grid)"
+  for name in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS DOTNET_SYSTEM_GLOBALIZATION_USENLS \
+              WINEMSYNC CX_GRAPHICS_BACKEND; do
+    line=$(grep -E "^\"$name\"" "$iagd_bottle/cxbottle.conf" 2>/dev/null | head -1)
+    if [[ -z $line ]]; then
+      info "$(printf '%-38s %s' $name 'not set')"
+    else
+      have=$(print -r -- "$line" | cut -d'"' -f4)
+      info "$(printf '%-38s %s' $name "${have:-(empty)}")"
+    fi
+  done
+  info ""
+  info "Measured, not assumed: each was changed on its own, on a bottle whose"
+  info "grid worked, and none of them turned it black."
 
   # ---------------------------------------------------------------- .NET
   head2 ".NET 10 Desktop Runtime"
@@ -307,8 +315,12 @@ else
   # install walks straight past it and reports the game missing from a bottle
   # that has it. Cheap -- a bottle is small, and this takes hundredths of a
   # second.
+  # Shallowest wins. A Steam install carries a compat/ subfolder with its own
+  # copy of the executable, and taking whatever find returned first named that
+  # instead of the install.
   gd_here=$(find "$iagd_bottle/drive_c" -maxdepth 7 -iname 'Grim Dawn.exe' \
-                 -not -ipath '*/x64/*' 2>/dev/null | head -1)
+                 -not -ipath '*/x64/*' 2>/dev/null \
+            | awk -F/ '{print NF"\t"$0}' | sort -n | head -1 | cut -f2-)
   if [[ -n $gd_here ]]; then
     info "Grim Dawn is in this bottle too, at $(tidy ${${gd_here:h}#$iagd_bottle/drive_c})"
   else
@@ -495,48 +507,32 @@ fi
 # If the environment is the only thing out of place, say exactly what to change.
 # This is the common case once the runtime is right, and it is no use naming a
 # setting without saying where it lives.
-# If the settings are what is out of place, say exactly what to change. This is
-# the common case once the runtime is right, and it is no use naming a setting
-# without saying where it lives. Ordered as it has to be done: the file is
-# rewritten when CrossOver exits, so it is edited first, with CrossOver closed.
-if (( ${#env_wrong} || rule_missing )); then
-  head2 "Setting those"
-  step=0
-
-  if (( ${#env_wrong} )); then
-    say "   $((++step)). Quit CrossOver -- it rewrites this file when it exits."
-    say ""
-    say "   $((++step)). Open this file in TextEdit:"
-    say ""
-    say "         $(tidy $iagd_bottle)/cxbottle.conf"
-    say ""
-    say "      Find the line that reads [EnvironmentVariables], near the bottom,"
-    say "      and put these underneath it, replacing any of the same name that"
-    say "      are already there:"
-    say ""
-    for name in $env_wrong; do
-      say "         \"$name\" = \"${GOOD_ENV[$name]}\""
-    done
-    say ""
-    say "      Save and close it."
-    say ""
-  fi
-
-  if (( rule_missing )); then
-    # They have already done this twice, for the installer and the updater, in
-    # step 2 of the guide. Naming it that way is clearer than any instruction.
-    say "   $((++step)). Start CrossOver, and set the same kind of rule step 2 of the"
-    say "      setup guide sets -- a Version of win7 -- but on the renderer itself."
-    say "      In this bottle: Control Panel > Wine Configuration > Applications,"
-    say "      add"
-    say ""
-    say "         c:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\$GOOD_WEBVIEW\\msedgewebview2.exe"
-    say ""
-    say "      and set its Windows version to Windows 7."
-    say ""
-  fi
-
-  say "   $((++step)). Run Item Assistant, then run this script again."
+# One instruction, for the one setting that was measured to matter. Everything
+# else this script reports is context; recommending four settings that were
+# each shown to make no difference buries the one that does.
+if (( rule_missing )); then
+  head2 "Setting it"
+  say "   The Applications tab lists only programs somebody has added to it, so"
+  say "   msedgewebview2.exe is probably not in the list yet rather than in it"
+  say "   with the wrong value."
+  say ""
+  say "   1. In CrossOver, open this bottle, then"
+  say "      Control Panel > Wine Configuration > Applications."
+  say ""
+  say "   2. If msedgewebview2.exe is in the list, select it. If it is not,"
+  say "      click Add application and choose:"
+  say ""
+  say "         c:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\$GOOD_WEBVIEW\\msedgewebview2.exe"
+  say ""
+  say "   3. With it selected, set Windows Version to Windows 7."
+  say ""
+  say "   4. Run Item Assistant. The grid should appear immediately; nothing"
+  say "      needs reinstalling and no other setting needs changing."
+  say ""
+  say "   If the grid is still black after that, delete this folder -- it is"
+  say "   the renderer's cache and it rebuilds itself:"
+  say ""
+  say "      $(tidy $iagd_data)/edge"
 fi
 
 say ""
