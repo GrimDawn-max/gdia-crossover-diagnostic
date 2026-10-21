@@ -277,10 +277,14 @@ else
     # a raw file count is not comparable between versions; what matters is
     # whether the pieces that draw the item grid are present
     missing=()
-    for f in WebView2Loader.dll Microsoft.Web.WebView2.Core.dll \
-             Microsoft.Web.WebView2.WinForms.dll IAGrim.dll; do
+    for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll IAGrim.dll; do
       [[ -f "$d/$f" ]] || missing+=("$f")
     done
+    # WebView2Loader.dll ships four times over -- once at the top and once per
+    # architecture under runtimes/, and .NET loads the one matching the
+    # architecture. Checking only the top level calls a sound install broken.
+    [[ -n $(find "$d" -name WebView2Loader.dll -print -quit 2>/dev/null) ]] \
+      || missing+=("WebView2Loader.dll")
     if (( ${#missing} )); then
       bad "Item Assistant is missing ${missing[*]}" "reinstall it -- step 5"
     else
@@ -298,14 +302,18 @@ else
   # can actually reach.
   head2 "Does it know any items"
 
-  gd_here=""
-  for g in "$iagd_bottle/drive_c"/*/"Grim Dawn" "$iagd_bottle/drive_c"/*/*/"Grim Dawn"; do
-    [[ -f "$g/Grim Dawn.exe" || -f "$g/x64/Grim Dawn.exe" ]] && { gd_here=$g; break }
-  done
+  # Searched rather than guessed at. A Steam copy sits four folders down, in
+  # Program Files (x86)/Steam/steamapps/common, and a pattern written for a GOG
+  # install walks straight past it and reports the game missing from a bottle
+  # that has it. Cheap -- a bottle is small, and this takes hundredths of a
+  # second.
+  gd_here=$(find "$iagd_bottle/drive_c" -maxdepth 7 -iname 'Grim Dawn.exe' \
+                 -not -ipath '*/x64/*' 2>/dev/null | head -1)
   if [[ -n $gd_here ]]; then
-    info "Grim Dawn is in this bottle too, at $(tidy ${gd_here#$iagd_bottle/drive_c})"
+    info "Grim Dawn is in this bottle too, at $(tidy ${${gd_here:h}#$iagd_bottle/drive_c})"
   else
-    info "Grim Dawn is NOT in this bottle -- Item Assistant cannot find it by itself"
+    info "Grim Dawn is not in this bottle -- Item Assistant cannot find it by itself,"
+    info "so the folder has to be set by hand (see below)"
   fi
 
   iagd_data=""
@@ -445,6 +453,8 @@ else
   else
     info "from $(tidy $iagd_data/log.txt), $(date -r "$iagd_data/log.txt" '+%Y-%m-%d %H:%M')"
     say ""
+    grep -qF '[diag]' "$iagd_data/log.txt" \
+      || info "this version of Item Assistant does not write one -- the milestones below come from the log itself"
     # verbatim, less the machine name, which is the one identifying line in it
     sed -n '/\[diag\] Item Assistant diagnostics/,/\[diag\].*Queued transfers/p' "$iagd_data/log.txt" \
       | sed -e 's/.*\[diag\] //' -e '/Machine name/d' -e "s|^|     |"
